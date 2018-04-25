@@ -5,6 +5,7 @@ cimport numpy as np
 
 from numpy import fft
 import math
+import time
 
 DTYPE = np.float64
 ctypedef np.float64_t DTYPE_t
@@ -186,6 +187,8 @@ def detectFreqs(np.ndarray[DTYPE_t, ndim=4] features, int numFreqs) :
     cdef DTYPE_t minR, tempR
     cdef np.ndarray[DTYPE_t, ndim=2] tempF
 
+    time1 = time.time()
+
     
     print("main loop start")
     while(True) :
@@ -199,6 +202,9 @@ def detectFreqs(np.ndarray[DTYPE_t, ndim=4] features, int numFreqs) :
             argminR = -1
             minR = np.inf
             for omega in range(0, lengthData) :
+                time2 = time.time()
+                print("minor minor loop : ", time2 - time1)
+                time1 = time.time()
                 # Rが最小となるomegaを探す
                 # freqsの中に、重複するものがあってはいけない
                 if (len(np.where(freqs == omega)[0]) != 0) :
@@ -213,6 +219,7 @@ def detectFreqs(np.ndarray[DTYPE_t, ndim=4] features, int numFreqs) :
                     sigma[c, :, :] = makeSigma(tempF)
                     detSigma[c] = np.linalg.det(sigma[c, :, :])
                     invSigma[c, :, :] = np.linalg.inv(sigma[c, :, :])
+
 
                 tempR = culR(featuresSelected[:, :, freqs_temp], sigma=sigma, mu=mu, detSigma=detSigma, invSigma=invSigma)
                 if(minR > tempR) :
@@ -242,18 +249,45 @@ cdef DTYPE_t culR(np.ndarray[DTYPE_t, ndim=3] features, np.ndarray[DTYPE_t, ndim
     cdef np.ndarray[DTYPE_t, ndim=1] muC
     cdef DTYPE_t detSigmaC
 
-    for temp in features :
-        for f in temp :
-            predictedC = makePrediction(np.array([f]), sigma=sigma, mu=mu, detSigma=detSigma, invSigma=invSigma)
+    # for temp in features :
+    #     for f in temp :
+    #         predictedC = makePrediction(np.array([f]), sigma=sigma, mu=mu, detSigma=detSigma, invSigma=invSigma)
+    #         d = sigma.shape[1]
+    #         sigmaC = sigma[predictedC]
+    #         muC = mu[predictedC]
+    #         detSigmaC = detSigma[predictedC]
+    #         invSigmaC = invSigma[predictedC]
+    #         x_muc = np.matrix(f - muC).T
+    #         temp2 += ((2 * np.pi) ** (-d / 2.0) * detSigmaC ** (-0.5) * np.exp(-x_muc.T.dot(invSigmaC).dot(x_muc) / 2))[0, 0]
+
+    cdef int c
+
+    function = culRsup(sigma, mu, detSigma, invSigma)
+
+    for c in range(0, features.shape[0]) :
+        for coin in range(0, features.shape[1]) :
+            predictedC = c
             d = sigma.shape[1]
-            sigmaC = sigma[predictedC]
-            muC = mu[predictedC]
-            detSigmaC = detSigma[predictedC]
-            invSigmaC = invSigma[predictedC]
-            x_muc = np.matrix(f - muC).T
-            temp2 += ((2 * np.pi) ** (-d / 2.0) * detSigmaC ** (-0.5) * np.exp(-x_muc.T.dot(invSigmaC).dot(x_muc) / 2))[0, 0]
+            x = features[c][coin]
+
+            temp2 += function(x, c)
+        
 
     coin = features.shape[0]
     numData = features.shape[1]
     temp2 = temp2 / (coin * numData)
-    return (1 - temp2)
+    return temp2
+
+def culRsup(sigma, mu, detSigma, invSigma) :
+    cdef int c, d
+    d = sigma.shape[1]
+
+    cons = np.array([((2 * np.pi) ** (-d / 2.0) * detSigma[c] ** (-0.5) * np.exp(-np.matrix(mu[c]).dot(invSigma[c]).dot(np.matrix(mu[c]).T) / 2))[0, 0] for c in range(0, sigma.shape[0])])
+
+    def function(x, c) :
+        x_mat = np.matrix(x)
+        arr = np.array([np.exp(-(x_mat.dot(invSigma[coin]).dot(x_mat.T) - 2 * np.matrix(mu[coin]).dot(invSigma[coin]).dot(np.matrix(mu[coin]).T)) / 2)[0, 0] for coin in range(0, sigma.shape[0])]) * cons
+
+        return arr[c] / np.sum(arr)
+
+    return function
