@@ -189,7 +189,6 @@ def detectFreqs(np.ndarray[DTYPE_t, ndim=4] features, int numFreqs) :
 
     time1 = time.time()
 
-    
     print("main loop start")
     while(True) :
         print("********************************")
@@ -197,6 +196,7 @@ def detectFreqs(np.ndarray[DTYPE_t, ndim=4] features, int numFreqs) :
         print("--------------------------------")
 
         freqs_old = freqs.copy()
+
         for f in range(0, numFreqs) :
             freqs[f] = -1
             argminR = -1
@@ -221,7 +221,20 @@ def detectFreqs(np.ndarray[DTYPE_t, ndim=4] features, int numFreqs) :
                     invSigma[c, :, :] = np.linalg.inv(sigma[c, :, :])
 
 
-                tempR = culR(featuresSelected[:, :, freqs_temp], sigma=sigma, mu=mu, detSigma=detSigma, invSigma=invSigma)
+                function = culRsup(sigma, mu, detSigma, invSigma)
+
+                
+                for c in range(0, numCoins) :
+                    for coin in range(0, numTimes * numData) :
+                        d = sigma.shape[1]
+                        x = featuresSelected[c, coin, freqs_temp]
+                        predictedC = makePrediction(np.array([x]), sigma=sigma, mu=mu, detSigma=detSigma, invSigma=invSigma)
+
+                        tempR += function(x, predictedC)
+
+                tempR = 1 - (tempR / (numCoins * numData * numTimes))
+
+
                 if(minR > tempR) :
                     minR = tempR
                     argminR = omega
@@ -249,33 +262,14 @@ cdef DTYPE_t culR(np.ndarray[DTYPE_t, ndim=3] features, np.ndarray[DTYPE_t, ndim
     cdef np.ndarray[DTYPE_t, ndim=1] muC
     cdef DTYPE_t detSigmaC
 
-    # for temp in features :
-    #     for f in temp :
-    #         predictedC = makePrediction(np.array([f]), sigma=sigma, mu=mu, detSigma=detSigma, invSigma=invSigma)
-    #         d = sigma.shape[1]
-    #         sigmaC = sigma[predictedC]
-    #         muC = mu[predictedC]
-    #         detSigmaC = detSigma[predictedC]
-    #         invSigmaC = invSigma[predictedC]
-    #         x_muc = np.matrix(f - muC).T
-    #         temp2 += ((2 * np.pi) ** (-d / 2.0) * detSigmaC ** (-0.5) * np.exp(-x_muc.T.dot(invSigmaC).dot(x_muc) / 2))[0, 0]
-
     cdef int c
 
     function = culRsup(sigma, mu, detSigma, invSigma)
 
-    for c in range(0, features.shape[0]) :
-        for coin in range(0, features.shape[1]) :
-            predictedC = c
-            d = sigma.shape[1]
-            x = features[c][coin]
-
-            temp2 += function(x, c)
         
 
     coin = features.shape[0]
     numData = features.shape[1]
-    temp2 = temp2 / (coin * numData)
     return temp2
 
 def culRsup(sigma, mu, detSigma, invSigma) :
