@@ -145,6 +145,8 @@ cdef np.ndarray[DTYPE_t, ndim=2] makeSigma(np.ndarray[DTYPE_t, ndim=2] data) :
 
 def detectFreqs(np.ndarray[DTYPE_t, ndim=4] features, int numFreqs) :
     print("preparation")
+    time1 = time.time()
+
     cdef int numCoins, numData, numTimes, lengthData
     numCoins = features.shape[0]
     numData = features.shape[1]
@@ -186,8 +188,7 @@ def detectFreqs(np.ndarray[DTYPE_t, ndim=4] features, int numFreqs) :
     cdef int argminR, omega, f
     cdef DTYPE_t minR, tempR
     cdef np.ndarray[DTYPE_t, ndim=2] tempF
-
-    time1 = time.time()
+    cdef np.ndarray[DTYPE_t, ndim=1] x
 
     print("main loop start")
     while(True) :
@@ -201,6 +202,7 @@ def detectFreqs(np.ndarray[DTYPE_t, ndim=4] features, int numFreqs) :
             freqs[f] = -1
             argminR = -1
             minR = np.inf
+            maxQda = -np.inf
             for omega in range(0, lengthData) :
                 time2 = time.time()
                 print("minor minor loop : ", time2 - time1)
@@ -209,9 +211,13 @@ def detectFreqs(np.ndarray[DTYPE_t, ndim=4] features, int numFreqs) :
                 # freqsの中に、重複するものがあってはいけない
                 if (len(np.where(freqs == omega)[0]) != 0) :
                     continue
-
+                time3 = time.time()
+                print("time3 : " + str(time3 - time1))
                 freqs_temp = freqs.copy()
                 freqs_temp[f] = omega
+                tempR = 0
+                time4 = time.time()
+                print("time4 : " + str(time4 - time3))
 
                 for c in range(0, numCoins) :
                     tempF = featuresSelected[c][:, freqs_temp]
@@ -220,24 +226,45 @@ def detectFreqs(np.ndarray[DTYPE_t, ndim=4] features, int numFreqs) :
                     detSigma[c] = np.linalg.det(sigma[c, :, :])
                     invSigma[c, :, :] = np.linalg.inv(sigma[c, :, :])
 
+                time5 = time.time()
+                print("time5 : " + str(time5 - time4))
 
-                function = culRsup(sigma, mu, detSigma, invSigma)
+                # function = culRsup(sigma, mu, detSigma, invSigma)
+                bayes = Bayes(mu=mu, sigma=sigma)
 
+                time6 = time.time()
                 
+                print("time6 : " + str(time6 - time5))
                 for c in range(0, numCoins) :
                     for coin in range(0, numTimes * numData) :
+                        time8 = time.time()
                         d = sigma.shape[1]
-                        x = featuresSelected[c, coin, freqs_temp]
-                        predictedC = makePrediction(np.array([x]), sigma=sigma, mu=mu, detSigma=detSigma, invSigma=invSigma)
+                        time9 = time.time()
+                        print("time9 : " + str(time9 - time8))
+                        x = featuresSelected[c][coin][freqs_temp]
+                        time10 = time.time()
+                        print("time10 : " + str(time10 - time9))
+                        # predictedC = makePrediction(np.array([x]), sigma=sigma, mu=mu, detSigma=detSigma, invSigma=invSigma)
+                        time11 = time.time()
+                        print("time11 : " + str(time11 - time10))
 
-                        tempR += function(x, predictedC)
+                        # tempR += function(x, predictedC)
+                        tempR += bayes.score(x)
+                        time12 = time.time()
+                        print("time12 : " + str(time12 - time11))
+
+                time7 = time.time()
+                print("time7 : " + str(time7 - time6))
 
                 tempR = 1 - (tempR / (numCoins * numData * numTimes))
+                qda = QDA(sigma=sigma, mu=mu)
 
 
                 if(minR > tempR) :
                     minR = tempR
                     argminR = omega
+                    print(maxQda < qda)
+                    maxQda = qda
 
             freqs[f] = argminR
             print("minor loop : ", f)
@@ -251,37 +278,66 @@ def detectFreqs(np.ndarray[DTYPE_t, ndim=4] features, int numFreqs) :
 
     return freqs, sigma, mu, detSigma, invSigma
 
-cdef DTYPE_t culR(np.ndarray[DTYPE_t, ndim=3] features, np.ndarray[DTYPE_t, ndim=3] sigma, np.ndarray[DTYPE_t, ndim=2] mu, np.ndarray[DTYPE_t, ndim=1] detSigma, np.ndarray[DTYPE_t, ndim=3] invSigma) :
-    cdef int coin, numData
-    cdef np.ndarray[DTYPE_t, ndim=2] temp
-    cdef DTYPE_t temp2
-    cdef np.ndarray[DTYPE_t, ndim=1] f
-
-    cdef int predictedC, d
-    cdef np.ndarray[DTYPE_t, ndim=2] sigmaC, invSigmaC, x_muc
-    cdef np.ndarray[DTYPE_t, ndim=1] muC
-    cdef DTYPE_t detSigmaC
-
-    cdef int c
-
-    function = culRsup(sigma, mu, detSigma, invSigma)
-
-        
-
-    coin = features.shape[0]
-    numData = features.shape[1]
-    return temp2
-
 def culRsup(sigma, mu, detSigma, invSigma) :
     cdef int c, d
     d = sigma.shape[1]
 
     cons = np.array([((2 * np.pi) ** (-d / 2.0) * detSigma[c] ** (-0.5) * np.exp(-np.matrix(mu[c]).dot(invSigma[c]).dot(np.matrix(mu[c]).T) / 2))[0, 0] for c in range(0, sigma.shape[0])])
 
-    def function(x, c) :
-        x_mat = np.matrix(x)
-        arr = np.array([np.exp(-(x_mat.dot(invSigma[coin]).dot(x_mat.T) - 2 * np.matrix(mu[coin]).dot(invSigma[coin]).dot(np.matrix(mu[coin]).T)) / 2)[0, 0] for coin in range(0, sigma.shape[0])]) * cons
+    def function(np.ndarray[DTYPE_t, ndim=1] x, int c) :
+        x_mat = np.array([x])
+        arr = np.array([np.exp(-(x_mat.dot(invSigma[coin]).dot(x_mat.T) - 2 * np.array([mu[coin]]).dot(invSigma[coin]).dot(np.array([mu[coin]]).T)) / 2)[0, 0] for coin in range(0, sigma.shape[0])]) * cons
 
         return arr[c] / np.sum(arr)
 
     return function
+
+
+cdef DTYPE_t QDA(np.ndarray[DTYPE_t, ndim=3] sigma, np.ndarray[DTYPE_t, ndim=2] mu) :
+    cdef np.ndarray[DTYPE_t, ndim=2] allSigma, sumSigma
+    allSigma = makeSigma(mu)
+
+    sumSigma = np.sum(sigma, 0) / 6
+
+    return np.linalg.det(allSigma) / np.linalg.det(sumSigma)
+
+class Bayes :
+    def __init__(self, np.ndarray[DTYPE_t, ndim=2] mu, np.ndarray[DTYPE_t, ndim=3] sigma) :
+        cdef int c
+        self.numClass = mu.shape[0]
+        self.numDimension = mu.shape[1]
+
+        self.detSigma = np.zeros(self.numClass)
+        self.invSigma = np.zeros_like(sigma)
+        self.mu = mu
+        self.sigma = sigma
+
+        for c in range(0, self.numClass) :
+            self.detSigma[c] = np.linalg.det(sigma[c])
+            self.invSigma[c, :, :] = np.linalg.inv(sigma[c])
+
+        self.cons = np.array([((2 * np.pi) ** (-self.numDimension / 2.0) * self.detSigma[c] ** (-0.5) * np.exp(-np.matrix(self.mu[c]).dot(self.invSigma[c]).dot(np.matrix(self.mu[c]).T) / 2))[0, 0] for c in range(0, self.numClass)])
+
+
+    def culLikelihood(self, np.ndarray[DTYPE_t, ndim=1] x, int c) :
+        cdef np.ndarray[DTYPE_t, ndim=2] x_mat
+        cdef DTYPE_t arr
+        x_mat = np.array([x])
+        arr = np.exp(-(x_mat.dot(self.invSigma[c]).dot(x_mat.T) - 2 * np.array([self.mu[c]]).dot(self.invSigma[c]).dot(np.array([self.mu[c]]).T)) / 2)[0, 0] * self.cons[c]
+
+        return arr
+
+    def makePrediction(self, x) :
+        cdef int predictedClass
+        cdef int c
+
+        return np.argmax([self.culLikelihood(x, c) for c in range(0, self.numClass)])
+
+    def score(self, x) :
+        cdef np.ndarray[DTYPE_t, ndim=1] l
+        cdef int c
+        l = np.array([self.culLikelihood(x, c) for c in range(0, self.numClass)])
+        c = np.argmax(l)
+        return l[c] / np.sum(l)
+        
+        
