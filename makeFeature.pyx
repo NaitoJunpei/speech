@@ -110,7 +110,6 @@ def makePrediction(np.ndarray[DTYPE_t, ndim=2] feature, np.ndarray[DTYPE_t, ndim
     logDist = np.zeros(numClass)
 
     cdef np.ndarray[DTYPE_t, ndim=1] x
-    cdef int c
     cdef np.ndarray[DTYPE_t, ndim=2] sigmaC, invSigmaC, x_muC
     cdef np.ndarray[DTYPE_t, ndim=1] muC
     cdef DTYPE_t detSigmaC
@@ -158,14 +157,19 @@ def detectFreqs(np.ndarray[DTYPE_t, ndim=4] features, int numFreqs) :
     # コインの種類x(データx時間)x周波数成分 に変える
     ####
 
-    cdef np.ndarray[DTYPE_t, ndim=3] featuresSelected
-    featuresSelected = np.zeros([numCoins, numData * numTimes, lengthData])
+    cdef np.ndarray[DTYPE_t, ndim=2] X, tempX, tempX2
+    cdef np.ndarray[DTYPE_t, ndim=1] Y
+    X = np.zeros([numCoins * numData * numTimes, lengthData])
+    tempX = np.zeros([numCoins * numData * numTimes, numFreqs])
+    Y = np.zeros(numCoins * numData * numTimes)
 
     cdef int c, cc, ccc
     for c in range(0, numCoins) :
         for cc in range(0, numData) :
             for ccc in range(0, numTimes) :
-                featuresSelected[c, cc * numTimes + ccc, :] = features[c, cc, ccc, :]
+                X[c * (numData * numTimes) + cc * (numTimes) + ccc, :] = features[c, cc, ccc, :]
+                Y[c * (numData * numTimes) + cc * (numTimes) + ccc] = c
+                
 
     cdef np.ndarray[DTYPE_t, ndim=2] mu
     cdef np.ndarray[DTYPE_t, ndim=3] sigma
@@ -187,8 +191,11 @@ def detectFreqs(np.ndarray[DTYPE_t, ndim=4] features, int numFreqs) :
     cdef np.ndarray[np.int_t, ndim=1] freqs_old
     cdef int argminR, omega, f
     cdef DTYPE_t minR, tempR
+    cdef np.ndarray[DTYPE_t, ndim=2] tempDis
     cdef np.ndarray[DTYPE_t, ndim=2] tempF
     cdef np.ndarray[DTYPE_t, ndim=1] x
+
+    cdef np.ndarray[DTYPE_t, ndim=2] A
 
     print("main loop start")
     while(True) :
@@ -205,66 +212,43 @@ def detectFreqs(np.ndarray[DTYPE_t, ndim=4] features, int numFreqs) :
             maxQda = -np.inf
             for omega in range(0, lengthData) :
                 time2 = time.time()
-                print("minor minor loop : ", time2 - time1)
+                # print("minor minor loop : ", time2 - time1)
                 time1 = time.time()
                 # Rが最小となるomegaを探す
                 # freqsの中に、重複するものがあってはいけない
                 if (len(np.where(freqs == omega)[0]) != 0) :
                     continue
-                time3 = time.time()
-                print("time3 : " + str(time3 - time1))
                 freqs_temp = freqs.copy()
                 freqs_temp[f] = omega
-                tempR = 0
-                time4 = time.time()
-                print("time4 : " + str(time4 - time3))
+                A = np.zeros([numFreqs, lengthData])
+                for temp_index, temp in enumerate(freqs_temp) :
+                    A[temp_index, temp] = 1
+                tempDis = np.zeros([numCoins, numCoins * numData * numTimes])
 
+                tempX = np.dot(A, X.T).T
+                
                 for c in range(0, numCoins) :
-                    tempF = featuresSelected[c][:, freqs_temp]
+                    tempF = tempX[np.where(Y == c)]
                     mu[c, :] = makeMu(tempF)
                     sigma[c, :, :] = makeSigma(tempF)
                     detSigma[c] = np.linalg.det(sigma[c, :, :])
                     invSigma[c, :, :] = np.linalg.inv(sigma[c, :, :])
 
-                time5 = time.time()
-                print("time5 : " + str(time5 - time4))
-
-                # function = culRsup(sigma, mu, detSigma, invSigma)
-                bayes = Bayes(mu=mu, sigma=sigma)
-
-                time6 = time.time()
-                
-                print("time6 : " + str(time6 - time5))
                 for c in range(0, numCoins) :
-                    for coin in range(0, numTimes * numData) :
-                        time8 = time.time()
-                        d = sigma.shape[1]
-                        time9 = time.time()
-                        print("time9 : " + str(time9 - time8))
-                        x = featuresSelected[c][coin][freqs_temp]
-                        time10 = time.time()
-                        print("time10 : " + str(time10 - time9))
-                        # predictedC = makePrediction(np.array([x]), sigma=sigma, mu=mu, detSigma=detSigma, invSigma=invSigma)
-                        time11 = time.time()
-                        print("time11 : " + str(time11 - time10))
+                    tempX2 = tempX - mu[c]
+                    tempDis[c] = np.exp(-0.5 * np.sum(np.dot(tempX2, invSigma[c]) * tempX2, axis=1)) * ((2 * np.pi) ** (-numFreqs / 2.0) * detSigma[c] ** (-0.5))
 
-                        # tempR += function(x, predictedC)
-                        tempR += bayes.score(x)
-                        time12 = time.time()
-                        print("time12 : " + str(time12 - time11))
+                predictedC = np.argmax(tempDis, axis=0)
+                tempR = np.sum(1 - tempDis[predictedC, np.array(range(0, predictedC.shape[0]))] / np.sum(tempDis, axis=0))
+                
+                # qda = QDA(sigma=sigma, mu=mu)
 
-                time7 = time.time()
-                print("time7 : " + str(time7 - time6))
-
-                tempR = 1 - (tempR / (numCoins * numData * numTimes))
-                qda = QDA(sigma=sigma, mu=mu)
-
-
+                tempR /= numCoins * numData * numTimes
                 if(minR > tempR) :
                     minR = tempR
                     argminR = omega
-                    print(maxQda < qda)
-                    maxQda = qda
+                    # print(maxQda < qda)
+                    # maxQda = qda
 
             freqs[f] = argminR
             print("minor loop : ", f)
@@ -323,7 +307,7 @@ class Bayes :
         cdef np.ndarray[DTYPE_t, ndim=2] x_mat
         cdef DTYPE_t arr
         x_mat = np.array([x])
-        arr = np.exp(-(x_mat.dot(self.invSigma[c]).dot(x_mat.T) - 2 * np.array([self.mu[c]]).dot(self.invSigma[c]).dot(np.array([self.mu[c]]).T)) / 2)[0, 0] * self.cons[c]
+        arr = np.exp(-(x_mat.dot(self.invSigma[c]).dot(x_mat.T) - 2 * np.array([self.mu[c]]).dot(self.invSigma[c]).dot(x_mat.T)) / 2)[0, 0] * self.cons[c]
 
         return arr
 
