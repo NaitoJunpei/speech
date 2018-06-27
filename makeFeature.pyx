@@ -7,6 +7,9 @@ from numpy import fft
 import math
 import time
 
+import wave
+import pyaudio
+
 DTYPE = np.float64
 ctypedef np.float64_t DTYPE_t
 
@@ -71,6 +74,8 @@ def makeFeature(np.ndarray[DTYPE_t, ndim=1] waveform, DTYPE_t sampleRate) :
 
     #### 最初のOn periodを求める
 
+    cdef int flag = 0
+
     cdef int step
     cdef int firstON
     cdef DTYPE_t loudness
@@ -78,9 +83,11 @@ def makeFeature(np.ndarray[DTYPE_t, ndim=1] waveform, DTYPE_t sampleRate) :
     for step in range(0, length) :
         #### 音量を求める
         loudness = detectLoudness(waveform[int(BinSize * step) : int(BinSize * (step + 1))])
-        if(loudness >= 50) :
+        if((loudness >= 50) and (flag == 1)) :
             firstON = step
             break
+        if(loudness <= 50) :
+            flag = 1
 
     #### 最初のOn periodから0.05secごとに周波数成分を求める
     cdef np.ndarray[DTYPE_t, ndim=1] specLog
@@ -325,3 +332,17 @@ class Bayes :
         return l[c] / np.sum(l)
         
         
+def getNewFile(filename, sigma, mu, detSigma, invSigma, freqs) :
+    wavefile = wave.open(filename, "r")
+    cdef DTYPE_t framerate = wavefile.getframerate()
+    data = wavefile.readframes(wavefile.getnframes())
+    wavefile.close()
+    x = np.frombuffer(data, dtype="int16")
+    x = x.astype("float64")
+    cdef DTYPE_t BinSize = 0.05 * framerate
+
+    cdef np.ndarray[DTYPE_t, ndim=2] f = makeFeature(x, framerate)[:, freqs]
+
+    predicted = makePrediction(f, sigma=sigma, mu=mu, detSigma=detSigma, invSigma=invSigma)
+
+    return predicted
