@@ -33,7 +33,8 @@ def culSpectrum(np.ndarray[DTYPE_t, ndim=1] wave, DTYPE_t sampleRate) :
 
     #### FFT変換 ####
     #### cdef np.ndarray[DTYPE_t, ndim=1] spectrum
-    spectrum = fft.fft(src, fftSize)
+    spectrum = np.abs(fft.fft(src, fftSize))
+    spectrum = spectrum / np.sum(spectrum)
 
     #### 対数振幅スペクトル導出 ####
     cdef np.ndarray[DTYPE_t, ndim=1] specLog
